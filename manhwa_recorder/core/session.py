@@ -113,6 +113,49 @@ class RecordingSession:
         if err:
             raise ValueError(err)
         rs = self.s.recording
+        if rs.extract_panels_only:
+            if not self.browser.is_alive():
+                b = self.s.browser
+                self._set_state("launching browser")
+                self.browser.launch(
+                    channel=b.channel, profile_dir=b.profile_dir,
+                    width=b.window_width, height=b.window_height,
+                    x=b.window_x, y=b.window_y, cdp_url=b.cdp_url,
+                )
+            out_root = Path(self.s.project.output_dir)
+            check_writable_dir(out_root)
+            cm = ChapterManager(out_root)
+            self.paths = cm.prepare(cm.plan(self.s.project.series_name, self.chapter,
+                                            self.s.project.filename, rs.container))
+            self._rec_log = RecordingLog(self.paths.log)
+            self._rec_log.open()
+            log.info("=== Extracting panels for %s chapter %s from %s",
+                     self.s.project.series_name, self.chapter, self.url)
+            self._set_state("opening chapter")
+            self.browser.open(self.url, self.s.browser.adapter, self.s.browser.image_wait_timeout)
+            self._set_state("extracting panels")
+            urls = self.browser.extract_panel_urls()
+            panels_dir = self.paths.folder / "panels"
+            self._set_state(f"downloading {len(urls)} panels")
+            downloaded = self.browser.download_panels(urls, panels_dir, referer=self.url)
+            log.info("Downloaded %d/%d panels into %s", len(downloaded), len(urls), panels_dir)
+            if self._rec_log:
+                self._rec_log.close()
+                self._rec_log = None
+            self._release()
+            self._set_state("idle")
+            self.cb.on_done({
+                "ok": True,
+                "video": "",
+                "error": "",
+                "reason": "panels_extracted",
+                "duration": 0.0,
+                "scrolls": 0,
+                "panels_count": len(downloaded),
+                "panels_dir": str(panels_dir),
+            })
+            return
+
         if rs.engine_mode != "playwright_tab" and not self.browser.is_alive():
             raise RuntimeError("Browser is not running. Launch it and open the chapter first.")
         ffmpeg_path = ff.find_ffmpeg(rs.ffmpeg_path)

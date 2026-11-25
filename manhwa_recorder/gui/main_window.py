@@ -8,14 +8,14 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, Signal, Slot
-from PySide6.QtGui import QDesktopServices, QKeySequence, QPixmap, QShortcut
+from PySide6.QtCore import QObject, QRunnable, QSize, Qt, QThreadPool, QTimer, Signal, Slot
+from PySide6.QtGui import QDesktopServices, QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtCore import QUrl
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog,
                                QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QLabel,
                                QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox,
                                QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSpinBox,
-                               QVBoxLayout, QWidget)
+                               QTabWidget, QVBoxLayout, QWidget)
 
 from ..config.settings import AppSettings
 from ..core.batch_manager import BatchManager
@@ -28,6 +28,7 @@ from ..utils.hotkeys import MOD_ALT, MOD_CONTROL, GlobalHotkeys
 from ..utils.validators import validate_url
 from .chapter_dialog import ChapterDialog
 from .settings_dialog import SettingsDialog
+from .video_editor import VideoEditorWidget
 
 log = logging.getLogger(__name__)
 RESOLUTIONS = ["1920x1080", "1280x720", "2560x1440", "3840x2160", "1080x1920"]
@@ -316,12 +317,50 @@ class MainWindow(QMainWindow):
         v.addWidget(self.log_view)
         right.addWidget(g, 1)
 
+        # --- Dedicated Panels screen (Tab 2)
+        panels_tab = QWidget()
+        pv = QVBoxLayout(panels_tab)
+        pv.setContentsMargins(6, 6, 6, 6)
+        prow = QHBoxLayout()
+        prow.addWidget(QLabel("Chapter:"))
+        self.panels_chapter_combo = QComboBox()
+        self.panels_chapter_combo.setMinimumWidth(220)
+        prow.addWidget(self.panels_chapter_combo, 1)
+        self.btn_panels_refresh = QPushButton("Refresh")
+        self.btn_panels_load = QPushButton("Load Folder…")
+        self.btn_panels_delete = QPushButton("Delete Selected")
+        self.btn_panels_open = QPushButton("Open Folder")
+        prow.addWidget(self.btn_panels_refresh)
+        prow.addWidget(self.btn_panels_load)
+        prow.addWidget(self.btn_panels_delete)
+        prow.addWidget(self.btn_panels_open)
+        pv.addLayout(prow)
+        self.panels_list = QListWidget()
+        self.panels_list.setViewMode(QListWidget.IconMode)
+        self.panels_list.setIconSize(QSize(190, 250))
+        self.panels_list.setResizeMode(QListWidget.Adjust)
+        self.panels_list.setSelectionMode(QListWidget.ExtendedSelection)
+        self.panels_list.setWordWrap(True)
+        self.panels_list.setSpacing(10)
+        pv.addWidget(self.panels_list, 1)
+
+        # --- Dedicated Video Editor screen (Tab 3)
+        self.video_editor = VideoEditorWidget(
+            get_ffmpeg=lambda: ff.find_ffmpeg(self.settings.recording.ffmpeg_path),
+            parent=self,
+        )
+
+        self.right_tabs = QTabWidget()
+        self.right_tabs.addTab(right_w, "Recorder")
+        self.right_tabs.addTab(panels_tab, "Panels")
+        self.right_tabs.addTab(self.video_editor, "Video Editor")
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(left_w)
         scroll.setMinimumWidth(470)
         outer.addWidget(scroll, 0)
-        outer.addWidget(right_w, 1)
+        outer.addWidget(self.right_tabs, 1)
         self.setCentralWidget(root)
 
     def _connect(self) -> None:
@@ -337,6 +376,13 @@ class MainWindow(QMainWindow):
         self.btn_emergency.clicked.connect(self.emergency_stop)
         self.btn_settings.clicked.connect(self.open_settings)
         self.btn_open_folder.clicked.connect(self.open_output_folder)
+        self.panels_chapter_combo.currentIndexChanged.connect(self._on_panels_chapter_changed)
+        self.btn_panels_refresh.clicked.connect(self._refresh_media_tabs)
+        self.btn_panels_load.clicked.connect(self.browse_panels_folder)
+        self.btn_panels_delete.clicked.connect(self.delete_selected_panels)
+        self.btn_panels_open.clicked.connect(self.open_panels_folder)
+        self.video_editor.btn_refresh.clicked.connect(self._refresh_media_tabs)
+        QShortcut(QKeySequence("Delete"), self.panels_list, activated=self.delete_selected_panels)
         self.btn_batch_add.clicked.connect(self.batch_add)
         self.btn_batch_remove.clicked.connect(self.batch_remove)
         self.btn_batch_clear.clicked.connect(self.batch_clear)
@@ -656,10 +702,21 @@ class MainWindow(QMainWindow):
     def _on_done(self, r: dict) -> None:
         self._update_buttons()
         if r["ok"]:
-            self.lbl_path.setText(r["video"])
-            self.progress.setValue(100)
-            self.progress.setFormat(f"done - {r['reason']}")
-            log.info("Saved %s (%.1fs, %d scrolls)", r["video"], r["duration"], r["scrolls"])
+            if r.get("reason") == "panels_extracted":
+                panels_dir = r.get("panels_dir", "")
+                self.lbl_path.setText(panels_dir)
+                self.progress.setValue(100)
+                self.progress.setFormat(f"done - {r.get('panels_count', 0)} panels")
+                log.info("Saved %d panels to %s", r.get("panels_count", 0), panels_dir)
+                if panels_dir:
+                    self.load_panels_folder(Path(panels_dir))
+                self._refresh_media_tabs()
+            else:
+                self.lbl_path.setText(r["video"])
+                self.progress.setValue(100)
+                self.progress.setFormat(f"done - {r['reason']}")
+                log.info("Saved %s (%.1fs, %d scrolls)", r["video"], r.get("duration", 0.0), r.get("scrolls", 0))
+                self._refresh_media_tabs()
         else:
             self.progress.setFormat("failed")
         if self.batch.active:
@@ -671,6 +728,80 @@ class MainWindow(QMainWindow):
                 return self._batch_next()
         if not r["ok"]:
             self._show_error(f"Recording failed: {r['error']}")
+
+    # ======================================================= panels & video
+    def load_panels_folder(self, folder: Path) -> None:
+        self._panels_dir = folder
+        self.panels_list.clear()
+        if not folder.exists():
+            return
+        exts = {".jpg", ".jpeg", ".png", ".webp", ".avif", ".gif"}
+        files = sorted(p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in exts)
+        for p in files:
+            item = QListWidgetItem(QIcon(QPixmap(str(p))), p.name)
+            item.setData(Qt.UserRole, str(p))
+            item.setToolTip(str(p))
+            self.panels_list.addItem(item)
+
+    def browse_panels_folder(self) -> None:
+        start = str(getattr(self, "_panels_dir", self.output_dir.text() or "."))
+        d = QFileDialog.getExistingDirectory(self, "Select panels folder", start)
+        if d:
+            self.load_panels_folder(Path(d))
+
+    def delete_selected_panels(self) -> None:
+        selected = self.panels_list.selectedItems()
+        if not selected:
+            return
+        for item in selected:
+            p = Path(item.data(Qt.UserRole))
+            try:
+                if p.exists():
+                    p.unlink()
+            except Exception as exc:
+                log.warning("Could not delete %s: %s", p, exc)
+            row = self.panels_list.row(item)
+            self.panels_list.takeItem(row)
+
+    def open_panels_folder(self) -> None:
+        d = getattr(self, "_panels_dir", None)
+        if d and Path(d).exists():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(d)))
+
+    def _on_panels_chapter_changed(self, _idx: int) -> None:
+        folder = self.panels_chapter_combo.currentData()
+        if folder:
+            self.load_panels_folder(Path(folder))
+
+    def _refresh_media_tabs(self) -> None:
+        out_root = Path(self.output_dir.text().strip() or self.settings.project.output_dir)
+        panel_items: list[tuple[str, str]] = []
+        video_items: list[tuple[str, str]] = []
+        if out_root.exists():
+            for ch_dir in sorted(out_root.glob("**/Chapter-*")):
+                if not ch_dir.is_dir():
+                    continue
+                pdir = ch_dir / "panels"
+                if pdir.is_dir():
+                    panel_items.append((f"{ch_dir.parent.name} / {ch_dir.name}", str(pdir)))
+                for ext in ("*.mp4", "*.mkv", "*.webm"):
+                    for vf in sorted(ch_dir.glob(ext)):
+                        video_items.append((f"{ch_dir.name} — {vf.name}", str(vf)))
+
+        cur_p = self.panels_chapter_combo.currentData()
+        self.panels_chapter_combo.blockSignals(True)
+        self.panels_chapter_combo.clear()
+        for label, path in panel_items:
+            self.panels_chapter_combo.addItem(label, path)
+        if cur_p:
+            idx = self.panels_chapter_combo.findData(cur_p)
+            if idx >= 0:
+                self.panels_chapter_combo.setCurrentIndex(idx)
+        self.panels_chapter_combo.blockSignals(False)
+        if self.panels_chapter_combo.count() > 0 and self.panels_list.count() == 0:
+            self.load_panels_folder(Path(self.panels_chapter_combo.currentData()))
+
+        self.video_editor.set_videos(video_items)
 
     def _tick(self) -> None:
         s = self.session

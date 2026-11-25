@@ -54,6 +54,25 @@ class SiteAdapter:
             return {{total: imgs.length, loaded: done}};
         }}"""
 
+    def panel_urls_js(self) -> str:
+        sel = self.image_selector or "img"
+        return f"""() => {{
+            const seen = new Set();
+            const urls = [];
+            const skipSel = 'header, footer, nav, aside, [class*="comment" i], [id*="comment" i], [class*="disqus" i], [class*="avatar" i]';
+            for (const img of document.querySelectorAll({sel!r})) {{
+                if (img.closest(skipSel)) continue;
+                const w = img.naturalWidth || img.width || 0;
+                const h = img.naturalHeight || img.height || 0;
+                if (w < 300 && h <= 300) continue;
+                const u = img.currentSrc || img.src || img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || '';
+                if (!u || u.startsWith('data:') || seen.has(u)) continue;
+                seen.add(u);
+                urls.push(u);
+            }}
+            return urls;
+        }}"""
+
     def matches(self, url: str) -> bool:
         host = urlparse(url).netloc.lower()
         return any(host == d or host.endswith("." + d) for d in self.domains)
@@ -98,6 +117,22 @@ class AsuraScansAdapter(SiteAdapter):
                 .filter(i => (i.naturalWidth || i.width) >= 300);
             const done = imgs.filter(i => i.complete && i.naturalHeight > 0).length;
             return {total: imgs.length, loaded: done};
+        }"""
+
+    def panel_urls_js(self) -> str:
+        return """() => {
+            const seen = new Set();
+            const urls = [];
+            const candidates = document.querySelectorAll('img[data-page-index], div[data-page] img');
+            const imgs = candidates.length ? candidates : document.querySelectorAll('img');
+            for (const img of imgs) {
+                const u = img.currentSrc || img.src || img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || '';
+                if (!u || u.startsWith('data:') || seen.has(u)) continue;
+                if (!u.includes('/chapters/') && !img.hasAttribute('data-page-index')) continue;
+                seen.add(u);
+                urls.push(u);
+            }
+            return urls;
         }"""
 
 

@@ -386,6 +386,51 @@ class BrowserController:
         except Exception:
             return None
 
+    def extract_panel_urls(self) -> list[str]:
+        """Extract all comic panel image URLs from the current page without scrolling."""
+        def _do():
+            page = self._need_page()
+            urls = page.evaluate(self.adapter.panel_urls_js())
+            return list(urls or [])
+        return self._call(_do, timeout=30)
+
+    def download_panels(self, urls: list[str], dest_dir: Path, referer: str = "") -> list[Path]:
+        """Download panel images using the browser context (preserving cookies/headers)."""
+        from urllib.parse import urlparse
+
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        headers = {"Referer": referer} if referer else {}
+
+        def _do():
+            page = self._need_page()
+            saved: list[Path] = []
+            for idx, url in enumerate(urls, start=1):
+                try:
+                    resp = page.context.request.get(url, headers=headers, timeout=30000)
+                    if not resp.ok:
+                        log.warning("Failed to download panel %d (%s): HTTP %s", idx, url, resp.status)
+                        continue
+                    ct = (resp.headers.get("content-type") or "").lower()
+                    ext = Path(urlparse(url).path).suffix.lower()
+                    if ext not in {".jpg", ".jpeg", ".png", ".webp", ".avif", ".gif"}:
+                        if "png" in ct:
+                            ext = ".png"
+                        elif "webp" in ct:
+                            ext = ".webp"
+                        elif "avif" in ct:
+                            ext = ".avif"
+                        elif "gif" in ct:
+                            ext = ".gif"
+                        else:
+                            ext = ".jpg"
+                    out = dest_dir / f"panel_{idx:03d}{ext}"
+                    out.write_bytes(resp.body())
+                    saved.append(out)
+                except Exception as exc:
+                    log.warning("Error downloading panel %d (%s): %s", idx, url, exc)
+            return saved
+        return self._call(_do, timeout=300)
+
     def close_current_page_and_get_video(self) -> Optional[str]:
         """Close current recorded page and create a replacement tab, returning the video path."""
         def _do():

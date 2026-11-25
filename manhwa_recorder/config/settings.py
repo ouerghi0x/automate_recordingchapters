@@ -58,6 +58,7 @@ class RecordingSettings(BaseModel):
     crop_w: int = 0
     crop_h: int = 0
     hide_clutter: bool = True  # hide floating headers, sticky bars, ads
+    extract_panels_only: bool = False  # open browser and download panel images without scrolling/recording
     region_x: int = 0
     region_y: int = 0
     region_w: int = Field(1920, ge=16)

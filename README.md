@@ -36,6 +36,9 @@ playwright install chromium
 ## Features
 
 - **Single & Batch Chapter Recording:** Queue chapter ranges (e.g., `1-10` or `45-48, 50`) with configurable confirmation between chapters.
+- **Download Panels Only (Optional):** Enable **Download panels only** in **Advanced settings** (`extract_panels_only`) to open each chapter in the browser and extract/download all comic panel images directly into `<chapter_folder>/panels/panel_001.*` without scrolling or recording video, filtering out comment avatars, ads, and navigation images.
+- **Panels Gallery Tab:** Dedicated **Panels** tab with a chapter selector for batch/output chapters, thumbnail grid, and one-click deletion (`Delete Selected` or `Delete` key) to remove unwanted images.
+- **Video Editor Tab:** Dedicated **Video Editor** tab with a real-time video preview, chapter/video selector, and a visual dual-handle timeline to drag Start/End cut points and export trimmed or cut segments via FFmpeg.
 - **Automatic Output Organization:** Saves each chapter cleanly into `output/<Series-Name>/Chapter-001/` with `chapter-001.mp4`, `metadata.json`, and `recording.log` (never overwrites existing takes).
 - **Global Hotkeys:**
   - `Ctrl + Alt + P` — Pause / Resume

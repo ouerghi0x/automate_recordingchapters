@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
                                QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLineEdit,
-                               QMessageBox, QPushButton, QSpinBox, QVBoxLayout, QWidget)
+                               QMessageBox, QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget)
 
 from ..config.settings import X264_PRESETS, AppSettings
 from ..core.site_adapters import adapter_names
@@ -30,9 +30,16 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Advanced settings")
         self.setMinimumWidth(520)
+        self.resize(560, 680)
         self.settings = settings
         r, b, sc, bt = settings.recording, settings.browser, settings.scroll, settings.batch
-        lay = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        lay = QVBoxLayout(content)
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
 
         # Encoding / capture
         g = QGroupBox("Capture & encoding")
@@ -58,6 +65,9 @@ class SettingsDialog(QDialog):
         self.hide_clutter = QCheckBox("Hide floating headers, navbars and clutter")
         self.hide_clutter.setChecked(r.hide_clutter)
         f.addRow("", self.hide_clutter)
+        self.extract_panels_only = QCheckBox("Download panels only (extract images without scrolling/recording)")
+        self.extract_panels_only.setChecked(r.extract_panels_only)
+        f.addRow("", self.extract_panels_only)
         self.off = [_spin(-500, 500, v) for v in (r.browser_offset_x, r.browser_offset_y,
                                                   r.browser_offset_w, r.browser_offset_h)]
         row = QHBoxLayout()
@@ -139,7 +149,7 @@ class SettingsDialog(QDialog):
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(self._accept)
         bb.rejected.connect(self.reject)
-        lay.addWidget(bb)
+        outer.addWidget(bb)
 
     @staticmethod
     def _wrap(layout) -> QWidget:
@@ -159,6 +169,7 @@ class SettingsDialog(QDialog):
         r.update(engine_mode=self.engine_mode.currentText(), preset=self.preset.currentText(),
                  capture_mode=self.capture_mode.currentText(),
                  crop_mode=self.crop_mode.currentText(), hide_clutter=self.hide_clutter.isChecked(),
+                 extract_panels_only=self.extract_panels_only.isChecked(),
                  browser_offset_x=self.off[0].value(), browser_offset_y=self.off[1].value(),
                  browser_offset_w=self.off[2].value(), browser_offset_h=self.off[3].value(),
                  region_x=self.reg[0].value(), region_y=self.reg[1].value(),
